@@ -656,7 +656,7 @@ static void FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATC
 // at which point disassembly must stop.
 // Finally, detect and collect information on IP-relative instructions
 // that we can patch.
-static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDATA* pdata) {
+static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDATA* pdata,BOOL bIgnoreJump) {
 	DWORD dwRet = 0;
 	pdata->nLimitDown = 0;
 	pdata->nLimitUp = 0;
@@ -677,11 +677,14 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 		ODPRINTF((L"mhooks: DisassembleAndSkip: Disassembling %p", pLoc));
 		while ( (dwRet < dwMinLen) && (pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags)) ) {
 			ODPRINTF(("mhooks: DisassembleAndSkip: %p:(0x%2.2x) %s", pLoc, pins->Length, pins->String));
-			if (pins->Type == ITYPE_RET		) break;
-			if (pins->Type == ITYPE_BRANCH	) break;
-			if (pins->Type == ITYPE_BRANCHCC) break;
-			if (pins->Type == ITYPE_CALL	) break;
-			if (pins->Type == ITYPE_CALLCC	) break;
+			if (!bIgnoreJump)
+			{
+				if (pins->Type == ITYPE_RET) break;
+				if (pins->Type == ITYPE_BRANCH) break;
+				if (pins->Type == ITYPE_BRANCHCC) break;
+				if (pins->Type == ITYPE_CALL) break;
+				if (pins->Type == ITYPE_CALLCC) break;
+			}
 
 			#if defined _M_X64
 				BOOL bProcessRip = FALSE;
@@ -765,7 +768,7 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 }
 
 //=========================================================================
-BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction) {
+BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction,BOOL bForce) {
 	MHOOKS_TRAMPOLINE* pTrampoline = NULL;
 	PVOID pSystemFunction = *ppSystemFunction;
 	// ensure thread-safety
@@ -777,7 +780,7 @@ BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction) {
 	ODPRINTF((L"mhooks: Mhook_SetHook: Started on the job: %p / %p", pSystemFunction, pHookFunction));
 	// figure out the length of the overwrite zone
 	MHOOKS_PATCHDATA patchdata = {0};
-	DWORD dwInstructionLength = DisassembleAndSkip(pSystemFunction, MHOOK_JMPSIZE, &patchdata);
+	DWORD dwInstructionLength = DisassembleAndSkip(pSystemFunction, MHOOK_JMPSIZE, &patchdata, bForce);
 	if (dwInstructionLength >= MHOOK_JMPSIZE) {
 		ODPRINTF((L"mhooks: Mhook_SetHook: disassembly signals %d bytes", dwInstructionLength));
 		// suspend every other thread in this process, and make sure their IP 
