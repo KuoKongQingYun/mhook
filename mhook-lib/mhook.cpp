@@ -655,7 +655,7 @@ static void FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATC
 // at which point disassembly must stop.
 // Finally, detect and collect information on IP-relative instructions
 // that we can patch.
-static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDATA* pdata,BOOL bIgnoreJump) {
+static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDATA* pdata,BOOL bAcceptJump) {
 	DWORD dwRet = 0;
 	pdata->nLimitDown = 0;
 	pdata->nLimitUp = 0;
@@ -705,6 +705,12 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 					// rip-addressing "mov [rip+imm32], reg"
 					ODPRINTF((L"mhooks: DisassembleAndSkip: found OP_IPREL on operand %d with displacement 0x%x (in memory: 0x%x)", 0, pins->X86.Displacement, *(PDWORD)(pLoc+3)));
 					bProcessRip = TRUE;
+				}
+				// accept jump
+				else if ((pins->Type == ITYPE_BRANCH || pins->Type == ITYPE_BRANCHCC) && (pins->OperandCount == 1) && (pins->Operands[0].Flags & OP_IPREL))
+				{
+					// rip-addressing "jmp [rip+imm32]"
+					ODPRINTF((L"mhooks: DisassembleAndSkip: found unsupported OP_IPREL on operand %d", 0));
 				}
 				else if ( (pins->OperandCount >= 1) && (pins->Operands[0].Flags & OP_IPREL) )
 				{
