@@ -41,7 +41,6 @@
 
 //=========================================================================
 #ifndef ODPRINTF
-
 #ifdef _DEBUG
 #define ODPRINTF(a) odprintf a
 #else
@@ -327,7 +326,7 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 	::GetSystemInfo(&sSysInfo);
 
 	// Always allocate in bulk, in case the system actually has a smaller allocation granularity than MINALLOCSIZE.
-	const ptrdiff_t cAllocSize = max(sSysInfo.dwAllocationGranularity, MHOOK_MINALLOCSIZE);
+	const ptrdiff_t cAllocSize = MAX(sSysInfo.dwAllocationGranularity, MHOOK_MINALLOCSIZE);
 
 	MHOOKS_TRAMPOLINE* pRetVal = NULL;
 	PBYTE pModuleGuess = (PBYTE) RoundDown((size_t)pSystemFunction, cAllocSize);
@@ -675,7 +674,8 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 		DWORD dwFlags = DISASM_DECODE | DISASM_DISASSEMBLE | DISASM_ALIGNOUTPUT;
 
 		ODPRINTF((L"mhooks: DisassembleAndSkip: Disassembling %p", pLoc));
-		while ( (dwRet < dwMinLen) && (pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags)) ) {
+		pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags);
+		while ( (dwRet < dwMinLen) && pins) {
 			ODPRINTF(("mhooks: DisassembleAndSkip: %p:(0x%2.2x) %s", pLoc, pins->Length, pins->String));
 			if (!bIgnoreJump)
 			{
@@ -759,6 +759,8 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 
 			dwRet += pins->Length;
 			pLoc  += pins->Length;
+
+			pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags);
 		}
 
 		CloseDisassembler(&dis);
