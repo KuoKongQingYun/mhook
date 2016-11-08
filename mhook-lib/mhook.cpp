@@ -41,7 +41,6 @@
 
 //=========================================================================
 #ifndef ODPRINTF
-
 #ifdef _DEBUG
 #define ODPRINTF(a) odprintf a
 #else
@@ -162,9 +161,9 @@ typedef BOOL(WINAPI * _Thread32Next)(
 
 //=========================================================================
 // Bring in the toolhelp functions from kernel32
-_CreateToolhelp32Snapshot fnCreateToolhelp32Snapshot = (_CreateToolhelp32Snapshot)GetProcAddress(GetModuleHandle(L"kernel32"), "CreateToolhelp32Snapshot");
-_Thread32First fnThread32First = (_Thread32First)GetProcAddress(GetModuleHandle(L"kernel32"), "Thread32First");
-_Thread32Next fnThread32Next = (_Thread32Next)GetProcAddress(GetModuleHandle(L"kernel32"), "Thread32Next");
+_CreateToolhelp32Snapshot fnCreateToolhelp32Snapshot = (_CreateToolhelp32Snapshot)GetProcAddress(GetModuleHandleW(L"kernel32"), "CreateToolhelp32Snapshot");
+_Thread32First fnThread32First = (_Thread32First)GetProcAddress(GetModuleHandleW(L"kernel32"), "Thread32First");
+_Thread32Next fnThread32Next = (_Thread32Next)GetProcAddress(GetModuleHandleW(L"kernel32"), "Thread32Next");
 
 //=========================================================================
 // Internal function:
@@ -183,7 +182,9 @@ static VOID ListRemove(MHOOKS_TRAMPOLINE** pListHead, MHOOKS_TRAMPOLINE* pNode) 
 
 	if ((*pListHead) == pNode) {
 		(*pListHead) = pNode->pNextTrampoline;
-		assert((*pListHead)->pPrevTrampoline == NULL);
+		if (*pListHead != NULL) {
+			assert((*pListHead)->pPrevTrampoline == NULL);
+		}
 	}
 
 	pNode->pPrevTrampoline = NULL;
@@ -331,7 +332,7 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 	::GetSystemInfo(&sSysInfo);
 
 	// Always allocate in bulk, in case the system actually has a smaller allocation granularity than MINALLOCSIZE.
-	const ptrdiff_t cAllocSize = MAX(sSysInfo.dwAllocationGranularity, MHOOK_MINALLOCSIZE);
+	const ptrdiff_t cAllocSize = max(sSysInfo.dwAllocationGranularity, MHOOK_MINALLOCSIZE);
 
 	MHOOKS_TRAMPOLINE* pRetVal = NULL;
 	PBYTE pModuleGuess = (PBYTE)RoundDown((size_t)pSystemFunction, cAllocSize);
@@ -361,6 +362,10 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 
 				// last entry points to the current head of the free list
 				pRetVal[trampolineCount - 1].pNextTrampoline = g_pFreeList;
+
+				if (g_pFreeList) {
+					g_pFreeList->pPrevTrampoline = &pRetVal[trampolineCount - 1];
+				}
 				break;
 			}
 		}
@@ -445,7 +450,7 @@ static MHOOKS_TRAMPOLINE* TrampolineGet(PBYTE pHookedFunction) {
 	MHOOKS_TRAMPOLINE* pCurrent = g_pHooks;
 
 	while (pCurrent) {
-		if (pCurrent->pHookFunction == pHookedFunction) {
+		if ((PBYTE)&(pCurrent->codeTrampoline) == pHookedFunction) {
 			return pCurrent;
 		}
 
@@ -665,7 +670,7 @@ static void FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATC
 // at which point disassembly must stop.
 // Finally, detect and collect information on IP-relative instructions
 // that we can patch.
-static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDATA* pdata, BOOL bIgnoreJump) {
+static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDATA* pdata, BOOL bAcceptJump) {
 	DWORD dwRet = 0;
 	pdata->nLimitDown = 0;
 	pdata->nLimitUp = 0;
@@ -684,10 +689,9 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 		DWORD dwFlags = DISASM_DECODE | DISASM_DISASSEMBLE | DISASM_ALIGNOUTPUT;
 
 		ODPRINTF((L"mhooks: DisassembleAndSkip: Disassembling %p", pLoc));
-		pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags);
-		while ((dwRet < dwMinLen) && pins) {
+		while ((dwRet < dwMinLen) && (pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags))) {
 			ODPRINTF(("mhooks: DisassembleAndSkip: %p:(0x%2.2x) %s", pLoc, pins->Length, pins->String));
-			if (!bIgnoreJump)
+			if (!bAcceptJump)
 			{
 				if (pins->Type == ITYPE_RET) break;
 				if (pins->Type == ITYPE_BRANCH) break;
@@ -717,7 +721,7 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 				bProcessRip = TRUE;
 			}
 			// accept jump
-			else if (bIgnoreJump && (pins->Type == ITYPE_BRANCH || pins->Type == ITYPE_BRANCHCC) && (pins->OperandCount == 1) && (pins->Operands[0].Flags & OP_IPREL))
+			else if (bAcceptJump && (pins->Type == ITYPE_BRANCH || pins->Type == ITYPE_BRANCHCC) && (pins->OperandCount == 1) && (pins->Operands[0].Flags & OP_IPREL))
 			{
 				// rip-addressing "jmp [rip+imm32]"
 				ODPRINTF((L"mhooks: DisassembleAndSkip: found unsupported OP_IPREL on operand %d", 0));
@@ -764,7 +768,7 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 					pdata->nLimitUp = nAdjustedDisplacement;
 				// store patch info
 				if (pdata->nRipCnt < MHOOKS_MAX_RIPS) {
-					if (bIgnoreJump && (pins->Type == ITYPE_BRANCH || pins->Type == ITYPE_BRANCHCC))
+					if (bAcceptJump && (pins->Type == ITYPE_BRANCH || pins->Type == ITYPE_BRANCHCC))
 					{
 						pdata->rips[pdata->nRipCnt].dwOffset = dwRet + pins->OpcodeLength;
 						pdata->rips[pdata->nRipCnt].nDisplacement = pins->X86.Displacement;
@@ -785,8 +789,6 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 
 			dwRet += pins->Length;
 			pLoc += pins->Length;
-
-			pins = GetInstruction(&dis, (ULONG_PTR)pLoc, pLoc, dwFlags);
 		}
 
 		CloseDisassembler(&dis);
@@ -794,8 +796,9 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 
 	return dwRet;
 }
+
 //=========================================================================
-BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction, BOOL bForce) {
+extern "C" BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction, BOOL bForce) {
 	MHOOKS_TRAMPOLINE* pTrampoline = NULL;
 	PVOID pSystemFunction = *ppSystemFunction;
 	// ensure thread-safety
@@ -912,7 +915,7 @@ BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction, BOOL bForce) {
 }
 
 //=========================================================================
-BOOL Mhook_Unhook(PVOID *ppHookedFunction) {
+extern "C" BOOL Mhook_Unhook(PVOID *ppHookedFunction) {
 	ODPRINTF((L"mhooks: Mhook_Unhook: %p", *ppHookedFunction));
 	BOOL bRet = FALSE;
 	EnterCritSec();

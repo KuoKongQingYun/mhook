@@ -24,9 +24,6 @@
     <ClCompile Include="mhook-test.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="stdafx.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="mhook-lib\mhook.cpp">
       <Filter>Source Files\mhook-lib</Filter>
     </ClCompile>

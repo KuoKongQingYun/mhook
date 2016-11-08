@@ -50,19 +50,29 @@ typedef LPVOID (WINAPI *_HeapAlloc)(HANDLE, DWORD, SIZE_T);
 typedef ULONG (WINAPI* _NtClose)(IN HANDLE Handle);
 
 //=========================================================================
+// Define _OpenPrinterW so we can dynamically bind to the function
+typedef BOOL(WINAPI* _OpenPrinterW)(
+	_In_  LPWSTR             pPrinterName,
+	_Out_ LPHANDLE           phPrinter,
+	_In_  LPPRINTER_DEFAULTS pDefault);
+
+//=========================================================================
 // Get the current (original) address to the functions to be hooked
 //
 _NtOpenProcess TrueNtOpenProcess = (_NtOpenProcess)
-	GetProcAddress(GetModuleHandle(L"ntdll"), "NtOpenProcess");
+	GetProcAddress(GetModuleHandleW(L"ntdll"), "NtOpenProcess");
 
 _SelectObject TrueSelectObject = (_SelectObject)
-	GetProcAddress(GetModuleHandle(L"gdi32"), "SelectObject");
+	GetProcAddress(GetModuleHandleW(L"gdi32"), "SelectObject");
 
-_getaddrinfo Truegetaddrinfo = (_getaddrinfo)GetProcAddress(GetModuleHandle(L"ws2_32"), "getaddrinfo");
+_getaddrinfo Truegetaddrinfo = (_getaddrinfo)GetProcAddress(GetModuleHandleW(L"ws2_32"), "getaddrinfo");
 
-_HeapAlloc TrueHeapAlloc = (_HeapAlloc)GetProcAddress(GetModuleHandle(L"kernel32"), "HeapAlloc");
+_HeapAlloc TrueHeapAlloc = (_HeapAlloc)GetProcAddress(GetModuleHandleW(L"kernel32"), "HeapAlloc");
 
-_NtClose TrueNtClose = (_NtClose)GetProcAddress(GetModuleHandle(L"ntdll"), "NtClose");
+_NtClose TrueNtClose = (_NtClose)GetProcAddress(GetModuleHandleW(L"ntdll"), "NtClose");
+
+// This also checks that we can follow the jump in the import stub.
+_OpenPrinterW TrueOpenPrinterW = &OpenPrinterW;
 
 //=========================================================================
 // This is the function that will replace NtOpenProcess once the hook 
@@ -73,7 +83,7 @@ ULONG WINAPI HookNtOpenProcess(OUT PHANDLE ProcessHandle,
 							   IN PVOID ObjectAttributes, 
 							   IN PCLIENT_ID ClientId)
 {
-	printf("***** Call to open process %d\n", ClientId->UniqueProcess);
+	printf("***** Call to open process %d\n", (int)ClientId->UniqueProcess);
 	return TrueNtOpenProcess(ProcessHandle, AccessMask, 
 		ObjectAttributes, ClientId);
 }
@@ -103,7 +113,7 @@ int WSAAPI Hookgetaddrinfo(const char* nodename, const char* servname, const str
 // is in place
 //
 LPVOID WINAPI HookHeapAlloc(HANDLE a_Handle, DWORD a_Bla, SIZE_T a_Bla2) {
-	printf("***** Call to HeapAlloc(0x%p, %u, 0x%p)\n", a_Handle, a_Bla, a_Bla2);
+	printf("***** Call to HeapAlloc(0x%p, %u, 0x%zd)\n", a_Handle, a_Bla, a_Bla2);
 	return TrueHeapAlloc(a_Handle, a_Bla, a_Bla2);
 }
 
@@ -117,6 +127,19 @@ ULONG WINAPI HookNtClose(HANDLE hHandle) {
 }
 
 //=========================================================================
+// This is the function that will replace OpenPrinterW once the hook
+// is in place
+//
+BOOL WINAPI HookOpenPrinterW(
+	_In_  LPWSTR             pPrinterName,
+	_Out_ LPHANDLE           phPrinter,
+	_In_  LPPRINTER_DEFAULTS pDefault)
+{
+	printf("***** Call to HookOpenPrinterW(\"%ls\", 0x%p, 0x%p)\n", pPrinterName, phPrinter, pDefault);
+	return TrueOpenPrinterW(pPrinterName, phPrinter, pDefault);
+}
+
+//=========================================================================
 // This is where the work gets done.
 //
 int wmain(int argc, WCHAR* argv[])
@@ -124,7 +147,7 @@ int wmain(int argc, WCHAR* argv[])
 	HANDLE hProc = NULL;
 
 	// Set the hook
-	if (Mhook_SetHook((PVOID*)&TrueNtOpenProcess, HookNtOpenProcess,TRUE)) {
+	if (Mhook_SetHook((PVOID*)&TrueNtOpenProcess, HookNtOpenProcess)) {
 		// Now call OpenProcess and observe NtOpenProcess being redirected
 		// under the hood.
 		hProc = OpenProcess(PROCESS_ALL_ACCESS, 
@@ -155,7 +178,7 @@ int wmain(int argc, WCHAR* argv[])
 	// extra work under the hood to make things work properly. This really
 	// is more of a test case rather than a demo.)
 	printf("Testing SelectObject.\n");
-	if (Mhook_SetHook((PVOID*)&TrueSelectObject, HookSelectobject, TRUE)) {
+	if (Mhook_SetHook((PVOID*)&TrueSelectObject, HookSelectobject)) {
 		// error checking omitted for brevity. doesn't matter much 
 		// in this context anyway.
 		HDC hdc = GetDC(NULL);
@@ -171,7 +194,7 @@ int wmain(int argc, WCHAR* argv[])
 	}
 
 	printf("Testing getaddrinfo.\n");
-	if (Mhook_SetHook((PVOID*)&Truegetaddrinfo, Hookgetaddrinfo, TRUE)) {
+	if (Mhook_SetHook((PVOID*)&Truegetaddrinfo, Hookgetaddrinfo)) {
 		// error checking omitted for brevity. doesn't matter much 
 		// in this context anyway.
 		WSADATA wd = {0};
@@ -198,7 +221,7 @@ int wmain(int argc, WCHAR* argv[])
 	}
 
 	printf("Testing HeapAlloc.\n");
-	if (Mhook_SetHook((PVOID*)&TrueHeapAlloc, HookHeapAlloc, TRUE))
+	if (Mhook_SetHook((PVOID*)&TrueHeapAlloc, HookHeapAlloc))
 	{
 		free(malloc(10));
 		// Remove the hook
@@ -206,11 +229,20 @@ int wmain(int argc, WCHAR* argv[])
 	}
 
 	printf("Testing NtClose.\n");
-	if (Mhook_SetHook((PVOID*)&TrueNtClose, HookNtClose, TRUE))
+	if (Mhook_SetHook((PVOID*)&TrueNtClose, HookNtClose))
 	{
 		CloseHandle(NULL);
 		// Remove the hook
 		Mhook_Unhook((PVOID*)&TrueNtClose);
+	}
+
+	printf("Testing OpenPrinterW.\n");
+	if (Mhook_SetHook((PVOID*)&TrueOpenPrinterW, HookOpenPrinterW))
+	{
+		HANDLE printer;
+		if (OpenPrinterW(L"Microsoft XPS Document Writer", &printer, NULL))
+			ClosePrinter(printer);
+		Mhook_Unhook((PVOID*)&TrueOpenPrinterW);
 	}
 
 	return 0;
