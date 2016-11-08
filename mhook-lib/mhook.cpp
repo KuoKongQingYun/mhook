@@ -54,11 +54,11 @@ inline void __cdecl odprintf(PCSTR format, ...) {
 	int len = _vscprintf(format, args);
 	if (len > 0) {
 		len += (1 + 2);
-		PSTR buf = (PSTR)malloc(len);
+		PSTR buf = (PSTR) malloc(len);
 		if (buf) {
 			len = vsprintf_s(buf, len, format, args);
 			if (len > 0) {
-				while (len && isspace(buf[len - 1])) len--;
+				while (len && isspace(buf[len-1])) len--;
 				buf[len++] = '\r';
 				buf[len++] = '\n';
 				buf[len] = 0;
@@ -76,11 +76,9 @@ inline void __cdecl odprintf(PCWSTR format, ...) {
 	int len = _vscwprintf(format, args);
 	if (len > 0) {
 		len += (1 + 2);
-		PWSTR buf = (PWSTR)malloc(sizeof(WCHAR)*len);
 		if (buf) {
 			len = vswprintf_s(buf, len, format, args);
 			if (len > 0) {
-				while (len && iswspace(buf[len - 1])) len--;
 				buf[len++] = L'\r';
 				buf[len++] = L'\n';
 				buf[len] = 0;
@@ -145,26 +143,26 @@ static DWORD g_nThreadHandles = 0;
 
 //=========================================================================
 // Toolhelp defintions so the functions can be dynamically bound to
-typedef HANDLE(WINAPI * _CreateToolhelp32Snapshot)(
-	DWORD dwFlags,
-	DWORD th32ProcessID
+typedef HANDLE (WINAPI * _CreateToolhelp32Snapshot)(
+	DWORD dwFlags,	   
+	DWORD th32ProcessID  
 	);
 
-typedef BOOL(WINAPI * _Thread32First)(
-	HANDLE hSnapshot,
-	LPTHREADENTRY32 lpte
-	);
+typedef BOOL (WINAPI * _Thread32First)(
+									   HANDLE hSnapshot,	 
+									   LPTHREADENTRY32 lpte
+									   );
 
-typedef BOOL(WINAPI * _Thread32Next)(
-	HANDLE hSnapshot,
-	LPTHREADENTRY32 lpte
-	);
+typedef BOOL (WINAPI * _Thread32Next)(
+									  HANDLE hSnapshot,	 
+									  LPTHREADENTRY32 lpte
+									  );
 
 //=========================================================================
 // Bring in the toolhelp functions from kernel32
-_CreateToolhelp32Snapshot fnCreateToolhelp32Snapshot = (_CreateToolhelp32Snapshot)GetProcAddress(GetModuleHandle(L"kernel32"), "CreateToolhelp32Snapshot");
-_Thread32First fnThread32First = (_Thread32First)GetProcAddress(GetModuleHandle(L"kernel32"), "Thread32First");
-_Thread32Next fnThread32Next = (_Thread32Next)GetProcAddress(GetModuleHandle(L"kernel32"), "Thread32Next");
+_CreateToolhelp32Snapshot fnCreateToolhelp32Snapshot = (_CreateToolhelp32Snapshot) GetProcAddress(GetModuleHandleW(L"kernel32"), "CreateToolhelp32Snapshot");
+_Thread32First fnThread32First = (_Thread32First) GetProcAddress(GetModuleHandleW(L"kernel32"), "Thread32First");
+_Thread32Next fnThread32Next = (_Thread32Next) GetProcAddress(GetModuleHandleW(L"kernel32"), "Thread32Next");
 
 //=========================================================================
 // Internal function:
@@ -183,7 +181,9 @@ static VOID ListRemove(MHOOKS_TRAMPOLINE** pListHead, MHOOKS_TRAMPOLINE* pNode) 
 
 	if ((*pListHead) == pNode) {
 		(*pListHead) = pNode->pNextTrampoline;
-		assert((*pListHead)->pPrevTrampoline == NULL);
+		if (*pListHead != NULL) {
+			assert((*pListHead)->pPrevTrampoline == NULL);
+		}
 	}
 
 	pNode->pPrevTrampoline = NULL;
@@ -247,20 +247,17 @@ static PBYTE SkipJumps(PBYTE pbCode) {
 		INT32 lOffset = *(INT32 *)&pbCode[2];
 		// ... that shows us an absolute pointer
 		return SkipJumps(*(PBYTE*)(pbCode + 6 + lOffset));
-	}
-	else if (pbCode[0] == 0x48 && pbCode[1] == 0xff && pbCode[2] == 0x25) {
+	} else if (pbCode[0] == 0x48 && pbCode[1] == 0xff && pbCode[2] == 0x25) {
 		// or we can have the same with a REX prefix
 		INT32 lOffset = *(INT32 *)&pbCode[3];
 		// ... that shows us an absolute pointer
 		return SkipJumps(*(PBYTE*)(pbCode + 7 + lOffset));
 #endif
-	}
-	else if (pbCode[0] == 0xe9) {
+	} else if (pbCode[0] == 0xe9) {
 		// here the behavior is identical, we have...
 		// ...a 32-bit offset to the destination.
 		return SkipJumps(pbCode + 5 + *(INT32 *)&pbCode[1]);
-	}
-	else if (pbCode[0] == 0xeb) {
+	} else if (pbCode[0] == 0xeb) {
 		// and finally an 8-bit offset to the destination
 		return SkipJumps(pbCode + 2 + *(CHAR *)&pbCode[1]);
 	}
@@ -287,8 +284,7 @@ static PBYTE EmitJump(PBYTE pbCode, PBYTE pbJumpTo) {
 		pbCode += 1;
 		*((PDWORD)pbCode) = (DWORD)(DWORD_PTR)(pbJumpTo - pbJumpFrom);
 		pbCode += sizeof(DWORD);
-	}
-	else {
+	} else {
 		pbCode[0] = 0xff;
 		pbCode[1] = 0x25;
 		pbCode += 2;
@@ -327,14 +323,14 @@ static size_t RoundDown(size_t addr, size_t rndDown)
 // near as possible to the specified function.
 //=========================================================================
 static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE pbUpper) {
-	SYSTEM_INFO sSysInfo = { 0 };
+	SYSTEM_INFO sSysInfo =  {0};
 	::GetSystemInfo(&sSysInfo);
 
 	// Always allocate in bulk, in case the system actually has a smaller allocation granularity than MINALLOCSIZE.
-	const ptrdiff_t cAllocSize = MAX(sSysInfo.dwAllocationGranularity, MHOOK_MINALLOCSIZE);
+	const ptrdiff_t cAllocSize = max(sSysInfo.dwAllocationGranularity, MHOOK_MINALLOCSIZE);
 
 	MHOOKS_TRAMPOLINE* pRetVal = NULL;
-	PBYTE pModuleGuess = (PBYTE)RoundDown((size_t)pSystemFunction, cAllocSize);
+	PBYTE pModuleGuess = (PBYTE) RoundDown((size_t)pSystemFunction, cAllocSize);
 	int loopCount = 0;
 	for (PBYTE pbAlloc = pModuleGuess; pbLower < pbAlloc && pbAlloc < pbUpper; ++loopCount) {
 		// determine current state
@@ -345,7 +341,7 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 		// free & large enough?
 		if (mbi.State == MEM_FREE && mbi.RegionSize >= (unsigned)cAllocSize) {
 			// and then try to allocate it
-			pRetVal = (MHOOKS_TRAMPOLINE*)VirtualAlloc(pbAlloc, cAllocSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+			pRetVal = (MHOOKS_TRAMPOLINE*) VirtualAlloc(pbAlloc, cAllocSize, MEM_COMMIT|MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 			if (pRetVal) {
 				size_t trampolineCount = cAllocSize / sizeof(MHOOKS_TRAMPOLINE);
 				ODPRINTF((L"mhooks: BlockAlloc: Allocated block at %p as %d trampolines", pRetVal, trampolineCount));
@@ -361,15 +357,19 @@ static MHOOKS_TRAMPOLINE* BlockAlloc(PBYTE pSystemFunction, PBYTE pbLower, PBYTE
 
 				// last entry points to the current head of the free list
 				pRetVal[trampolineCount - 1].pNextTrampoline = g_pFreeList;
+
+				if (g_pFreeList) {
+					g_pFreeList->pPrevTrampoline = &pRetVal[trampolineCount - 1];
+				}
 				break;
 			}
 		}
-
+				
 		// This is a spiral, should be -1, 1, -2, 2, -3, 3, etc. (* cAllocSize)
 		ptrdiff_t bytesToOffset = (cAllocSize * (loopCount + 1) * ((loopCount % 2 == 0) ? -1 : 1));
 		pbAlloc = pbAlloc + bytesToOffset;
 	}
-
+	
 	return pRetVal;
 }
 
@@ -386,7 +386,7 @@ static MHOOKS_TRAMPOLINE* FindTrampolineInRange(PBYTE pLower, PBYTE pUpper) {
 	// This is a standard free list, except we're doubly linked to deal with soem return shenanigans.
 	MHOOKS_TRAMPOLINE* curEntry = g_pFreeList;
 	while (curEntry) {
-		if ((MHOOKS_TRAMPOLINE*)pLower < curEntry && curEntry < (MHOOKS_TRAMPOLINE*)pUpper) {
+		if ((MHOOKS_TRAMPOLINE*) pLower < curEntry && curEntry < (MHOOKS_TRAMPOLINE*) pUpper) {
 			ListRemove(&g_pFreeList, curEntry);
 
 			return curEntry;
@@ -412,10 +412,10 @@ static MHOOKS_TRAMPOLINE* TrampolineAlloc(PBYTE pSystemFunction, S64 nLimitUp, S
 	// in the basic scenario this is +/- 2GB but IP-relative instructions
 	// found in the original code may require a smaller window.
 	PBYTE pLower = pSystemFunction + nLimitUp;
-	pLower = pLower < (PBYTE)(DWORD_PTR)0x0000000080000000 ?
-		(PBYTE)(0x1) : (PBYTE)(pLower - (PBYTE)0x7fff0000);
+	pLower = pLower < (PBYTE)(DWORD_PTR)0x0000000080000000 ? 
+						(PBYTE)(0x1) : (PBYTE)(pLower - (PBYTE)0x7fff0000);
 	PBYTE pUpper = pSystemFunction + nLimitDown;
-	pUpper = pUpper < (PBYTE)(DWORD_PTR)0xffffffff80000000 ?
+	pUpper = pUpper < (PBYTE)(DWORD_PTR)0xffffffff80000000 ? 
 		(PBYTE)(pUpper + (DWORD_PTR)0x7ff80000) : (PBYTE)(DWORD_PTR)0xfffffffffff80000;
 	ODPRINTF((L"mhooks: TrampolineAlloc: Allocating for %p between %p and %p", pSystemFunction, pLower, pUpper));
 
@@ -445,7 +445,7 @@ static MHOOKS_TRAMPOLINE* TrampolineGet(PBYTE pHookedFunction) {
 	MHOOKS_TRAMPOLINE* pCurrent = g_pHooks;
 
 	while (pCurrent) {
-		if (pCurrent->pHookFunction == pHookedFunction) {
+		if ((PBYTE)&(pCurrent->codeTrampoline) == pHookedFunction) {
 			return pCurrent;
 		}
 
@@ -505,8 +505,7 @@ static HANDLE SuspendOneThread(DWORD dwThreadId, PBYTE pbCode, DWORD cbBytes) {
 						Sleep(100);
 						SuspendThread(hThread);
 						nTries++;
-					}
-					else {
+					} else {
 						// we gave it all we could. (this will probably never 
 						// happen - unless the thread has already been suspended 
 						// to begin with)
@@ -516,15 +515,13 @@ static HANDLE SuspendOneThread(DWORD dwThreadId, PBYTE pbCode, DWORD cbBytes) {
 						hThread = NULL;
 						break;
 					}
-				}
-				else {
+				} else {
 					// success, the IP is not conflicting
 					ODPRINTF((L"mhooks: SuspendOneThread: Successfully suspended thread %d - IP is at %p", dwThreadId, pIp));
 					break;
 				}
 			}
-		}
-		else {
+		} else {
 			// couldn't suspend
 			CloseHandle(hThread);
 			hThread = NULL;
@@ -543,7 +540,7 @@ static VOID ResumeOtherThreads() {
 	INT nOriginalPriority = GetThreadPriority(GetCurrentThread());
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
 	// go through our list
-	for (DWORD i = 0; i < g_nThreadHandles; i++) {
+	for (DWORD i=0; i<g_nThreadHandles; i++) {
 		// and resume & close thread handles
 		ResumeThread(g_hThreadHandles[i]);
 		CloseHandle(g_hThreadHandles[i]);
@@ -581,14 +578,14 @@ static BOOL SuspendOtherThreads(PBYTE pbCode, DWORD cbBytes) {
 					}
 				}
 				te.dwSize = sizeof(te);
-			} while (fnThread32Next(hSnap, &te));
+			} while(fnThread32Next(hSnap, &te));
 		}
 		ODPRINTF((L"mhooks: SuspendOtherThreads: counted %d other threads", nThreadsInProcess));
 		if (nThreadsInProcess) {
 			// alloc buffer for the handles we really suspended
-			g_hThreadHandles = (HANDLE*)malloc(nThreadsInProcess * sizeof(HANDLE));
+			g_hThreadHandles = (HANDLE*)malloc(nThreadsInProcess*sizeof(HANDLE));
 			if (g_hThreadHandles) {
-				ZeroMemory(g_hThreadHandles, nThreadsInProcess * sizeof(HANDLE));
+				ZeroMemory(g_hThreadHandles, nThreadsInProcess*sizeof(HANDLE));
 				DWORD nCurrentThread = 0;
 				BOOL bFailed = FALSE;
 				te.dwSize = sizeof(te);
@@ -602,8 +599,7 @@ static BOOL SuspendOtherThreads(PBYTE pbCode, DWORD cbBytes) {
 								if (GOOD_HANDLE(g_hThreadHandles[nCurrentThread])) {
 									ODPRINTF((L"mhooks: SuspendOtherThreads: successfully suspended %d", te.th32ThreadID));
 									nCurrentThread++;
-								}
-								else {
+								} else {
 									ODPRINTF((L"mhooks: SuspendOtherThreads: error while suspending thread %d: %d", te.th32ThreadID, gle()));
 									// TODO: this might not be the wisest choice
 									// but we can choose to ignore failures on
@@ -616,7 +612,7 @@ static BOOL SuspendOtherThreads(PBYTE pbCode, DWORD cbBytes) {
 							}
 						}
 						te.dwSize = sizeof(te);
-					} while (fnThread32Next(hSnap, &te) && !bFailed);
+					} while(fnThread32Next(hSnap, &te) && !bFailed);
 				}
 				g_nThreadHandles = nCurrentThread;
 				bRet = !bFailed;
@@ -627,6 +623,7 @@ static BOOL SuspendOtherThreads(PBYTE pbCode, DWORD cbBytes) {
 		// in the current process (including those that might have been
 		// created since we took the original snapshot) have been 
 		// suspended.
+	} else {
 	}
 	else {
 		ODPRINTF((L"mhooks: SuspendOtherThreads: can't CreateToolhelp32Snapshot: %d", gle()));
@@ -649,9 +646,9 @@ static void FixupIPRelativeAddressing(PBYTE pbNew, PBYTE pbOriginal, MHOOKS_PATC
 	for (DWORD i = 0; i < pdata->nRipCnt; i++) {
 		DWORD dwNewDisplacement = (DWORD)(pdata->rips[i].nDisplacement - diff);
 		ODPRINTF((L"mhooks: fixing up RIP instruction operand for code at 0x%p: "
-			L"old displacement: 0x%8.8x, new displacement: 0x%8.8x",
-			pbNew + pdata->rips[i].dwOffset,
-			(DWORD)pdata->rips[i].nDisplacement,
+			L"old displacement: 0x%8.8x, new displacement: 0x%8.8x", 
+			pbNew + pdata->rips[i].dwOffset, 
+			(DWORD)pdata->rips[i].nDisplacement, 
 			dwNewDisplacement));
 		*(PDWORD)(pbNew + pdata->rips[i].dwOffset) = dwNewDisplacement;
 	}
@@ -675,7 +672,7 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 #elif defined _M_X64
 	ARCHITECTURE_TYPE arch = ARCH_X64;
 #else
-#error unsupported platform
+	#error unsupported platform
 #endif
 	DISASSEMBLER dis;
 	if (InitDisassembler(&dis, arch)) {
@@ -795,7 +792,7 @@ static DWORD DisassembleAndSkip(PVOID pFunction, DWORD dwMinLen, MHOOKS_PATCHDAT
 	return dwRet;
 }
 //=========================================================================
-BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction, BOOL bForce) {
+extern "C" BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction, BOOL bForce) {
 	MHOOKS_TRAMPOLINE* pTrampoline = NULL;
 	PVOID pSystemFunction = *ppSystemFunction;
 	// ensure thread-safety
@@ -912,7 +909,7 @@ BOOL Mhook_SetHook(PVOID *ppSystemFunction, PVOID pHookFunction, BOOL bForce) {
 }
 
 //=========================================================================
-BOOL Mhook_Unhook(PVOID *ppHookedFunction) {
+extern "C" BOOL Mhook_Unhook(PVOID *ppHookedFunction) {
 	ODPRINTF((L"mhooks: Mhook_Unhook: %p", *ppHookedFunction));
 	BOOL bRet = FALSE;
 	EnterCritSec();
